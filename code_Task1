@@ -1,0 +1,113 @@
+//This is the code which was used to execute the task 1 of the project which was:
+//Basic Network Sniffer: Build a network sniffer in Python that captures and analyzes network traffic. This project will help you understand how data flows on a network and how network packets are structured.
+import socket
+import struct 
+import textwrap
+
+def main():
+    conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohns(3))
+    while True:
+        raw_data, addr = conn.recvfrom(65536)
+        dest_mac, src_mac, eth_proto, data = ethernet_frame(raw_data)
+        print('\n ethernet frame:')
+        print('destination: {}, source: {}, protocol: {}'.format(dest_mac, src_mac, eth_proto))
+
+        if eth_proto == 34525:
+            version, traffic_class, flow_label, payload_length, next_header, hop_limit, src, target, data = ipv6_packet(data)
+            print('ipv6 packet: ')
+            print('version: {}, traffic class: {}, flow label: {}'.format(version, traffic_class, flow_label))
+            print('payload length: {}, next header: {}, hop limit: {}'.format(payload_length, next_header, hop_limit))
+            print('source: {}, target: {}'.format(src, target))
+
+        if eth_proto == 8:
+            version, header_length, ttl, proto, src, target, data = ipv4_packet(data)
+            print('ipv4 packet:')
+            print('version: {}, header_length: {}, ttl: {}'.format(version, header_length, ttl))
+            print('protocol: {}, source: {}, target: {}'.format(proto, src, target))
+
+        if proto==1:
+            icmp_type, code, checksum, data = icmp_packet(data)
+            print('icmp packet ')
+            print('type: {}, code: {}, checksum: {}'.format(icmp_type,code,checksum))
+            print('data: ')
+            print(format_output_line(data))
+
+        elif proto == 6:
+            src_port, dest_port, sequence, acknowledgement, flag_urg, flag_ack, flag_psh, flag_rst, flag_syn, flag_fin, data = tcp_segment(data)
+            print('tcp segment: ')
+            print('source port: {}, destination port: {}'.format(src_port,dest_port))
+            print('sequence: {}, acknowledgement: {}'.format(sequence,acknowledgement))
+            print('flags: ')
+            print('URG: {},ACK: {},PSH: {},RST: {},SYN: {},FIN: {}'.format(flag_urg,flag_ack,flag_psh,flag_rst,flag_syn,flag_fin))
+            print('data: ')
+            print(format_output_line(data))
+        
+        elif proto == 17:
+            src_port, dest_port, length, data = udp_segment(data)
+            print('udp segment: ')
+            print('source port: {}, destination port: {}, length: {}'.format(src_port,dest_port,length))
+            print('data: ')
+            print(format_output_line(data))
+
+        else:
+            print('data: ')
+            print(format_output_line(data))
+    else: 
+        print('data: ')
+        print(format_output_line(data))
+
+def icmp_packet(data):
+    icmp_type, code, checksum = struct.unpack('! B B H', data[:4])
+    return icmp_type, code, checksum, data[4:]
+
+def tcp_segment(data):
+    src_port, dest_port, sequence, acknowledgement, offset_reserved_flags = struct.unpack('! H H L L H',data[:14])
+    offset = (offset_reserved_flags >> 12)*4
+    flag_urg = (offset_reserved_flags & 32)>>5
+    flag_ack = (offset_reserved_flags & 16)>>4
+    flag_psh = (offset_reserved_flags & 8)>>3
+    flag_rst = (offset_reserved_flags & 4)>>2
+    flag_syn = (offset_reserved_flags & 2)>>1
+    flag_fin = offset_reserved_flags & 1
+    return src_port, dest_port, sequence, acknowledgement, flag_urg, flag_ack, flag_psh, flag_rst, flag_syn, flag_fin, data[offset:]
+
+def udp_segment(data):
+    src_port, dest_port, size = struct.unpack('! H H 2x H',data[:8])
+    return src_port, dest_port, size, data[8:]
+
+def format_output_line(data):
+    data_str = ''
+    for i in range(0,len(data), 16):
+        line = data[i:i+16]
+        hexa = ' '.join([f'(x:02x)' for x in line])
+        text = ''.join([chr(x) if 32<=x<=126 else '.' for x in line])
+        data_str += f'{hexa:<48} {text}\n'
+    return data_str
+
+def ethernet_frame(data):
+    dest_mac, src_mac, proto = struct.unpack('! 6s 6s H', data[:14])
+    return get_mac_addr(dest_mac), get_mac_addr(src_mac), socket.htons(proto), data[14:]
+
+def get_mac_addr(bytes_addr):
+    bytes_str = map('{:02x}'.format, bytes_addr)
+    return ':'.join(bytes_str).upper()
+
+def ipv4_packet(data):
+    version_header_length = data[0]
+    version = version_header_length >> 4
+    header_length = (version_header_length & 15) * 4
+    ttl, proto, src, target = struct.unpack('! 8x B B 2x 4s 4s', data[:20])
+    return version, header_length, ttl, proto, ipv4(src), ipv4(target), data[header_length:]
+
+def ipv6_packet(data):
+    version = data[0] >> 4
+    traffic_class = (data[0] & 15) << 4 | data[1] >> 4
+    flow_label = (data[1] & 15) << 16 | data[2] << 8 | data[3]
+    payload_length, next_header, hop_limit = struct.unpack('! H B B', data[4:8])
+    src = get_ipv6_addr(data[8:24])
+    target = get_ipv6_addr(data[24:40])
+    return version, traffic_class, flow_label, payload_length, next_header, hop_limit, src, target, data[40:]
+
+def get_ipv6_addr(bytes_addr):
+    addr = [f'{bytes_addr[i]:02x}{bytes_addr[i+1]:02x}' for i in range(0, len(bytes_addr), 2)]
+    return ':'.join(addr).lower()
